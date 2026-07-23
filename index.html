@@ -31,18 +31,44 @@
   .btns{display:flex;gap:7px;margin-top:8px}
   button{border:none;border-radius:10px;padding:11px 8px;font-size:14px;font-weight:700;cursor:pointer;flex:1}
   .b-start{background:#0C8583;color:#fff}.b-stop{background:#E07B2E;color:#fff}
+  .help{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.2);color:#fff;border:none;font-size:16px;font-weight:800;margin-left:auto;margin-right:8px}
+  #howto{position:absolute;inset:0;z-index:20;background:rgba(8,16,20,.72);display:flex;align-items:center;justify-content:center;padding:18px}
+  .howcard{background:#12242f;border:1px solid #24404c;border-radius:16px;max-width:440px;width:100%;padding:18px 20px;color:#eaf0f2}
+  .howcard h2{margin:0 0 10px;font-size:17px;color:#5fd0cc}
+  .howcard ol{margin:0 0 12px;padding-left:20px;font-size:13.5px;line-height:1.7}
+  .howcard .note{font-size:12px;color:#9fb4bc;line-height:1.6;margin:0 0 14px}
+  .howcard button{background:#0C8583;color:#fff;border:none;border-radius:10px;padding:11px;font-size:14px;font-weight:700;width:100%}
   .b-undo,.b-reset{background:#26414d;color:#dfe9ec}
   .b-copy{background:#2f6f4f;color:#fff;width:100%;margin-top:7px}
+  #result{margin-top:9px;background:#0f3b2e;border:1px solid #1f9d55;border-radius:12px;padding:11px 13px}
+  #result .rlabel{font-size:11px;color:#7fd0a5;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+  #result .rtext{font-size:16px;color:#eaf0f2;font-weight:700;line-height:1.4}
   .toast{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:#26414d;color:#fff;padding:8px 14px;border-radius:20px;font-size:12px;opacity:0;transition:opacity .25s;z-index:6;pointer-events:none;white-space:nowrap}
   .toast.on{opacity:1}
   .zbtns{position:absolute;bottom:10px;right:10px;display:flex;flex-direction:column;gap:6px;z-index:4}
-  .zbtns button{height:38px;padding:0 14px;border-radius:10px;background:rgba(18,37,48,.92);color:#fff;border:1px solid #24404c;font-size:13px;font-weight:700}
+  .zbtns button{height:38px;padding:0 16px;border-radius:10px;background:#E07B2E;color:#fff;border:none;font-size:13px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.35)}
 </style></head>
 <body><div id="app">
   <header>
     <div><h1>GaitWay</h1><div class="sub">Ambulation Tracker</div></div>
+    <button class="help" id="help" aria-label="How to use">?</button>
     <div class="u" id="units">feet</div>
   </header>
+  <div id="howto" style="display:none">
+    <div class="howcard">
+      <h2>How to use GaitWay</h2>
+      <ol>
+        <li>Tap <b>Start</b>, then tap the room where the walk began.</li>
+        <li>Tap <b>each corner</b> the patient turned, then the ending spot. A line traces the route as you go.</li>
+        <li>Tap <b>Record walk</b> when finished to log the distance and time.</li>
+        <li>Walked the same loop again? Tap <b>+ Add another lap</b> — the total distance updates automatically.</li>
+        <li>The <b>green result box</b> shows the distance, time, and gait speed to chart. Read it and enter it in Epic.</li>
+        <li>The result <b>stays on screen</b> and won't disappear if you tap around. Only <b>Reset</b> clears it, and it asks you to confirm first.</li>
+      </ol>
+      <p class="note">Pinch to zoom, drag to pan, or tap <b>Fit to screen</b>. Nothing is saved to the phone — GaitWay only calculates, so chart the result before you tap Reset. Tap <b>?</b> anytime to see these steps again.</p>
+      <button id="howclose">Got it</button>
+    </div>
+  </div>
   <div id="map">
     <div id="vp">
       <svg id="plan" width="1100" height="1024" viewBox="0 0 1100 1024" xmlns="http://www.w3.org/2000/svg">
@@ -182,14 +208,16 @@
     <div class="btns">
       <button class="b-start" id="start">Start</button>
       <button class="b-undo" id="undo">Undo</button>
-      <button class="b-stop" id="stop">Stop</button>
+      <button class="b-stop" id="stop">Record walk</button>
       <button class="b-reset" id="reset">Reset</button>
     </div>
     <div class="btns" id="laprow" style="display:none">
-      <button class="b-undo" id="addlap">+ Add lap</button>
-      <button class="b-undo" id="repeat">Repeat last route</button>
+      <button class="b-start" id="addlap">+ Add another lap of this route</button>
     </div>
-    <button class="b-copy" id="copy">Copy for charting</button>
+    <div id="result" style="display:none">
+      <div class="rlabel">Chart in Epic:</div>
+      <div class="rtext" id="resulttext"></div>
+    </div>
   </div>
 </div>
 <script>
@@ -300,6 +328,7 @@ function segPath(w1,w2){
 // ---- walk state ----
 let started=false, wpts=[], adjust=0, t0=null, tEnd=null, tick=null, useMeters=false;
 let laps=[], lastRoute=null;   // laps: [{feet,secs,paths}]
+let lastLapFeet=0, lastLapSecs=0, lastLapPaths=null;  // last completed route, for + Add another lap
 const LAPCOLORS=['#E0402E','#2f8fd0','#8e5cc9','#e0a020','#1f9d55','#d0479f','#0C8583','#c26a1f'];
 function lapTotals(){ let ft=0,sec=0; for(const L of laps){ ft+=L.feet; sec+=L.secs; } return {ft,sec}; }
 function totalFeet(){ let s=0; for(let i=0;i<wpts.length-1;i++) s+=segDist(wpts[i],wpts[i+1]); return s+adjust; }
@@ -335,17 +364,22 @@ function updateLapBadge(){
 function refresh(){ overlay.innerHTML=renderRoute(); render(); updateLapBadge(); }
 
 function render(){
-  const ft=started?totalFeet():0;
+  const cur = started?totalFeet():0;
+  const T = lapTotals();
+  const ft = T.ft + cur;                 // cumulative: banked laps + current walk
   document.getElementById('dist').textContent=useMeters?(ft*0.3048).toFixed(1):Math.round(ft);
   document.getElementById('unit').textContent=useMeters?'m':'ft';
-  let g='--'; if(tEnd&&t0){ const s=(tEnd-t0)/1000; if(s>2) g=((ft*0.3048)/s).toFixed(2); }
+  // gait speed over cumulative distance & time
+  let curSecs = (tEnd&&t0)?((tEnd-t0)/1000):0;
+  const secs = T.sec + curSecs;
+  let g='--'; if(secs>2 && ft>0) g=((ft*0.3048)/secs).toFixed(2);
   document.getElementById('gait').textContent=g;
   document.getElementById('adjval').textContent=(adjust>=0?'+':'')+adjust+' ft';
   const rt=document.getElementById('routetxt');
-  let base = !started?'No walk started.' : (wpts.length? `${wpts.length} point${wpts.length>1?'s':''} tapped` : 'Tap where the walk began.');
-  if(laps.length){ const T=lapTotals(); const tf=useMeters?(T.ft*0.3048).toFixed(1)+' m':Math.round(T.ft)+' ft';
-    base += `  —  ${laps.length} lap${laps.length>1?'s':''} banked, ${tf} total`; }
-  rt.textContent = base;
+  if(!started){ rt.textContent='No walk started.'; }
+  else if(wpts.length<1){ rt.textContent='Tap where the walk began.'; }
+  else if(laps.length){ rt.textContent = `${laps.length+1} laps walked`; }
+  else { rt.textContent = 'Walk in progress — tap Stop when done.'; }
 }
 
 // nearest labeled node to a projected point (for the charting summary wording)
@@ -384,53 +418,66 @@ function startTimer(){ document.getElementById('adjrow').style.display='flex';
 
 document.getElementById('start').onclick=()=>{ started=true; wpts=[]; adjust=0; t0=null; tEnd=null;
   document.getElementById('pill').style.display='block'; document.getElementById('pill').innerHTML='Tap the start, then <b>each corner</b>, then the end'; refresh(); toast('Tap the start point'); };
-document.getElementById('stop').onclick=()=>{ if(!started||wpts.length<2){toast('Tap at least start + end');return;} tEnd=Date.now(); clearInterval(tick); document.getElementById('laprow').style.display='flex'; render(); toast('Walk complete'); };
-document.getElementById('addlap').onclick=()=>{
-  if(!wpts.length||wpts.length<2){ toast('Tap a walk first'); return; }
+document.getElementById('stop').onclick=()=>{ if(!started||wpts.length<2){toast('Tap at least start + end');return;} tEnd=Date.now(); clearInterval(tick); lastRoute=wpts.slice(); lastLapFeet=totalFeet(); lastLapSecs=Math.round((tEnd-t0)/1000); lastLapPaths=currentPaths(); document.getElementById('laprow').style.display='flex'; render(); showResult(); toast('Walk recorded'); };
+function bankCurrent(){
+  if(wpts.length<2) return false;
   const secs=(tEnd&&t0)?Math.round((tEnd-t0)/1000):(t0?Math.round((Date.now()-t0)/1000):0);
   laps.push({feet:totalFeet(), secs, paths:currentPaths()});
   lastRoute=wpts.slice();
-  // reset for the next lap but keep 'started'
+  lastLapFeet=totalFeet(); lastLapSecs=secs; lastLapPaths=currentPaths();
   wpts=[]; adjust=0; t0=null; tEnd=null;
-  document.getElementById('pill').style.display='block';
-  document.getElementById('pill').innerHTML='Lap banked — tap the next route, or <b>Repeat last route</b>';
-  refresh(); toast('Lap added');
-};
-document.getElementById('repeat').onclick=()=>{
-  if(!lastRoute){ toast('No previous route yet'); return; }
-  wpts=lastRoute.slice(); t0=Date.now(); tEnd=null; adjust=0; startTimer();
-  document.getElementById('pill').style.display='none';
-  refresh(); toast('Repeated last route — tap Stop when done');
+  return true;
+}
+// "+ Add another lap": add the last route's distance (and time) to the running total again
+document.getElementById('addlap').onclick=()=>{
+  // if there's a finished walk on screen, bank it first
+  if(wpts.length>=2) bankCurrent();
+  if(!lastLapFeet){ toast('Finish a walk first'); return; }
+  laps.push({feet:lastLapFeet, secs:lastLapSecs, paths:lastLapPaths});
+  refresh(); showResult(); toast('Lap added to total');
 };
 document.getElementById('undo').onclick=()=>{ if(wpts.length){ wpts.pop(); refresh(); } };
-document.getElementById('reset').onclick=()=>{ started=false; wpts=[]; adjust=0; t0=null; tEnd=null; clearInterval(tick); laps=[]; lastRoute=null; document.getElementById('laprow').style.display='none'; document.getElementById('lapbadge').style.display='none';
+document.getElementById('reset').onclick=()=>{ if(hasResult && !confirm('Clear the recorded result? Make sure you have charted it first.')) return; started=false; wpts=[]; adjust=0; t0=null; tEnd=null; clearInterval(tick); laps=[]; lastRoute=null; lastLapFeet=0; lastLapSecs=0; lastLapPaths=null; hasResult=false; document.getElementById('result').style.display='none'; document.getElementById('laprow').style.display='none'; document.getElementById('lapbadge').style.display='none';
   document.getElementById('adjrow').style.display='none'; document.getElementById('timer').textContent='0:00';
   document.getElementById('pill').style.display='block'; document.getElementById('pill').innerHTML='Tap <b>Start</b>, then tap where the walk began'; refresh(); };
 document.getElementById('plus').onclick=()=>{ adjust+=5; render(); };
 document.getElementById('minus').onclick=()=>{ adjust-=5; render(); };
 document.getElementById('units').onclick=()=>{ useMeters=!useMeters; document.getElementById('units').textContent=useMeters?'meters':'feet'; render(); };
+document.getElementById('help').onclick=()=>{ document.getElementById('howto').style.display='flex'; };
+document.getElementById('howclose').onclick=()=>{ document.getElementById('howto').style.display='none'; };
+document.getElementById('howto').addEventListener('click',e=>{ if(e.target.id==='howto') e.currentTarget.style.display='none'; });
+// show the how-to once per session on first open
+document.getElementById('howto').style.display='flex';
 document.getElementById('zfit').onclick=fit;
-document.getElementById('copy').onclick=()=>{
-  // include any banked laps plus the current (if a valid walk is on screen)
+// build the chart-ready result text from banked laps + current walk
+function buildResult(){
   let ft=0, secs=0, nlaps=laps.length;
   const T=lapTotals(); ft+=T.ft; secs+=T.sec;
   const curValid = started && wpts.length>=2;
   if(curValid){ ft+=totalFeet(); const cs=(tEnd&&t0)?Math.round((tEnd-t0)/1000):(t0?Math.round((Date.now()-t0)/1000):0); secs+=cs; nlaps+=1; }
-  if(ft<=0){ toast('Complete a walk first'); return; }
+  if(ft<=0) return null;
   const m=(ft*0.3048).toFixed(1);
   const g=(secs>2)?((ft*0.3048)/secs).toFixed(2):null;
   let s;
-  if(nlaps>1){
-    s=`Ambulation: ${nlaps} laps, ${Math.round(ft)} ft (${m} m) total`;
-  } else {
+  if(nlaps>1){ s=`Ambulation ${nlaps} laps: ${Math.round(ft)} ft (${m} m) total`; }
+  else {
     const from=nearestLabel(wpts[0]||lastRoute[0]), to=nearestLabel((wpts.length?wpts:lastRoute)[(wpts.length?wpts:lastRoute).length-1]);
     s=`Ambulation: ${Math.round(ft)} ft (${m} m), ${from} → ${to}`;
   }
   if(secs)s+=`; time ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;
   if(g)s+=`; ${nlaps>1?'avg ':''}gait speed ${g} m/s`;
-  const done=()=>toast('Copied for Epic');
-  if(navigator.clipboard) navigator.clipboard.writeText(s).then(done,()=>fb(s)); else fb(s);
-  function fb(t){ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');done();}catch(e){} ta.remove(); } };
+  return s;
+}
+// show / refresh the persistent result panel
+function showResult(){
+  const r=buildResult();
+  const box=document.getElementById('result');
+  if(r){ document.getElementById('resulttext').textContent=r; box.style.display='block'; hasResult=true; }
+}
+
+// warn before leaving if there's an un-charted result on screen
+let hasResult=false;
+window.addEventListener('beforeunload',e=>{ if(hasResult){ e.preventDefault(); e.returnValue=''; } });
 
 window.addEventListener('resize',()=>{ fit(); });
 if(window.ResizeObserver){ new ResizeObserver(()=>{ if(view.k<=minK+0.001) fit(); }).observe(map); }
