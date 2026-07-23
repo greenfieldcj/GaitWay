@@ -36,7 +36,7 @@
   .toast{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:#26414d;color:#fff;padding:8px 14px;border-radius:20px;font-size:12px;opacity:0;transition:opacity .25s;z-index:6;pointer-events:none;white-space:nowrap}
   .toast.on{opacity:1}
   .zbtns{position:absolute;bottom:10px;right:10px;display:flex;flex-direction:column;gap:6px;z-index:4}
-  .zbtns button{width:40px;height:40px;border-radius:10px;background:rgba(18,37,48,.92);color:#fff;border:1px solid #24404c;font-size:18px;font-weight:700}
+  .zbtns button{height:38px;padding:0 14px;border-radius:10px;background:rgba(18,37,48,.92);color:#fff;border:1px solid #24404c;font-size:13px;font-weight:700}
 </style></head>
 <body><div id="app">
   <header>
@@ -165,7 +165,8 @@
       </svg>
     </div>
     <div class="pill" id="pill">Tap <b>Start</b>, then tap where the walk began</div>
-    <div class="zbtns"><button id="zin">+</button><button id="zout">−</button><button id="zfit">⬚</button></div>
+    <div id="lapbadge" style="position:absolute;top:8px;right:8px;z-index:5;background:#0C8583;color:#fff;font-weight:800;font-size:15px;padding:7px 13px;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.35);display:none">Lap 1</div>
+    <div class="zbtns"><button id="zfit">Fit to screen</button></div>
     <div class="toast" id="toast"></div>
   </div>
   <div class="readout">
@@ -281,16 +282,43 @@ function segDist(w1,w2){
   const r=dijkstra('T1','T2',extra);
   return r? r.dist : 0;
 }
+// the actual hallway polyline (feet points) between two projected waypoints
+function segPath(w1,w2){
+  // same edge: straight along that corridor from w1 to w2
+  if((w1.a===w2.a&&w1.b===w2.b)||(w1.a===w2.b&&w1.b===w2.a)){
+    return [{x:w1.px,y:w1.py},{x:w2.px,y:w2.py}];
+  }
+  const extra={T1:{}, T2:{}};
+  extra.T1[w1.a]=w1.t*w1.feet; extra.T1[w1.b]=(1-w1.t)*w1.feet;
+  extra.T2[w2.a]=w2.t*w2.feet; extra.T2[w2.b]=(1-w2.t)*w2.feet;
+  const r=dijkstra('T1','T2',extra);
+  if(!r) return [{x:w1.px,y:w1.py},{x:w2.px,y:w2.py}];
+  // r.path is node ids incl T1/T2; map to coords (T1/T2 -> projected points)
+  return r.path.map(id=> id==='T1'?{x:w1.px,y:w1.py} : id==='T2'?{x:w2.px,y:w2.py} : {x:N[id].x,y:N[id].y});
+}
 
 // ---- walk state ----
 let started=false, wpts=[], adjust=0, t0=null, tEnd=null, tick=null, useMeters=false;
-let laps=[], lastRoute=null;   // laps: [{feet,secs}]; lastRoute: saved wpts for 'repeat'
+let laps=[], lastRoute=null;   // laps: [{feet,secs,paths}]
+const LAPCOLORS=['#E0402E','#2f8fd0','#8e5cc9','#e0a020','#1f9d55','#d0479f','#0C8583','#c26a1f'];
 function lapTotals(){ let ft=0,sec=0; for(const L of laps){ ft+=L.feet; sec+=L.secs; } return {ft,sec}; }
 function totalFeet(){ let s=0; for(let i=0;i<wpts.length-1;i++) s+=segDist(wpts[i],wpts[i+1]); return s+adjust; }
 
+function currentPaths(){ const out=[]; for(let i=0;i<wpts.length-1;i++) out.push(segPath(wpts[i],wpts[i+1])); return out; }
+function pathToD(pts){ return 'M '+pts.map(p=>`${fx2sx(p.x).toFixed(1)} ${fy2sy(p.y).toFixed(1)}`).join(' L '); }
 function renderRoute(){
   let s='';
-  // draw tapped waypoints and connecting highlighted path (approx: straight between projected pts along edges)
+  // banked laps, each in its own color (faded)
+  laps.forEach((L,li)=>{ const c=LAPCOLORS[li%LAPCOLORS.length];
+    (L.paths||[]).forEach(pts=>{ s+=`<path d="${pathToD(pts)}" fill="none" stroke="${c}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" opacity="0.5"/>`; });
+  });
+  // current lap in the next color, full strength
+  const cc=LAPCOLORS[laps.length%LAPCOLORS.length];
+  for(let i=0;i<wpts.length-1;i++){
+    const pts=segPath(wpts[i],wpts[i+1]);
+    s+=`<path d="${pathToD(pts)}" fill="none" stroke="${cc}" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" opacity="0.95"/>`;
+  }
+  // tapped waypoints (dots + order number)
   for(let i=0;i<wpts.length;i++){ const w=wpts[i];
     s+=`<circle cx="${fx2sx(w.px)}" cy="${fy2sy(w.py)}" r="7" fill="#5fd0cc" stroke="#0e1a20" stroke-width="2"/>`;
     s+=`<circle cx="${fx2sx(w.px)+9}" cy="${fy2sy(w.py)-9}" r="6.5" fill="#E07B2E"/>`;
@@ -298,7 +326,13 @@ function renderRoute(){
   }
   return s;
 }
-function refresh(){ overlay.innerHTML=renderRoute(); render(); }
+function updateLapBadge(){
+  const b=document.getElementById('lapbadge');
+  const total=laps.length + ((started&&wpts.length>=1)?1:0);
+  if(laps.length>0){ b.style.display='block'; b.textContent='Lap '+total; b.style.background=LAPCOLORS[(total-1)%LAPCOLORS.length]; }
+  else b.style.display='none';
+}
+function refresh(){ overlay.innerHTML=renderRoute(); render(); updateLapBadge(); }
 
 function render(){
   const ft=started?totalFeet():0;
@@ -349,12 +383,12 @@ function startTimer(){ document.getElementById('adjrow').style.display='flex';
   tick=setInterval(()=>{ if(t0&&!tEnd){ const s=Math.floor((Date.now()-t0)/1000); document.getElementById('timer').textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); } },500); }
 
 document.getElementById('start').onclick=()=>{ started=true; wpts=[]; adjust=0; t0=null; tEnd=null;
-  document.getElementById('pill').style.display='block'; document.getElementById('pill').innerHTML='Now tap where the walk <b>began</b>'; refresh(); toast('Tap the start point'); };
+  document.getElementById('pill').style.display='block'; document.getElementById('pill').innerHTML='Tap the start, then <b>each corner</b>, then the end'; refresh(); toast('Tap the start point'); };
 document.getElementById('stop').onclick=()=>{ if(!started||wpts.length<2){toast('Tap at least start + end');return;} tEnd=Date.now(); clearInterval(tick); document.getElementById('laprow').style.display='flex'; render(); toast('Walk complete'); };
 document.getElementById('addlap').onclick=()=>{
   if(!wpts.length||wpts.length<2){ toast('Tap a walk first'); return; }
   const secs=(tEnd&&t0)?Math.round((tEnd-t0)/1000):(t0?Math.round((Date.now()-t0)/1000):0);
-  laps.push({feet:totalFeet(), secs});
+  laps.push({feet:totalFeet(), secs, paths:currentPaths()});
   lastRoute=wpts.slice();
   // reset for the next lap but keep 'started'
   wpts=[]; adjust=0; t0=null; tEnd=null;
@@ -369,14 +403,12 @@ document.getElementById('repeat').onclick=()=>{
   refresh(); toast('Repeated last route — tap Stop when done');
 };
 document.getElementById('undo').onclick=()=>{ if(wpts.length){ wpts.pop(); refresh(); } };
-document.getElementById('reset').onclick=()=>{ started=false; wpts=[]; adjust=0; t0=null; tEnd=null; clearInterval(tick); laps=[]; lastRoute=null; document.getElementById('laprow').style.display='none';
+document.getElementById('reset').onclick=()=>{ started=false; wpts=[]; adjust=0; t0=null; tEnd=null; clearInterval(tick); laps=[]; lastRoute=null; document.getElementById('laprow').style.display='none'; document.getElementById('lapbadge').style.display='none';
   document.getElementById('adjrow').style.display='none'; document.getElementById('timer').textContent='0:00';
   document.getElementById('pill').style.display='block'; document.getElementById('pill').innerHTML='Tap <b>Start</b>, then tap where the walk began'; refresh(); };
 document.getElementById('plus').onclick=()=>{ adjust+=5; render(); };
 document.getElementById('minus').onclick=()=>{ adjust-=5; render(); };
 document.getElementById('units').onclick=()=>{ useMeters=!useMeters; document.getElementById('units').textContent=useMeters?'meters':'feet'; render(); };
-document.getElementById('zin').onclick=()=>{ const r=map.getBoundingClientRect(); zoomAt(r.width/2,r.height/2,1.3); };
-document.getElementById('zout').onclick=()=>{ const r=map.getBoundingClientRect(); zoomAt(r.width/2,r.height/2,1/1.3); };
 document.getElementById('zfit').onclick=fit;
 document.getElementById('copy').onclick=()=>{
   // include any banked laps plus the current (if a valid walk is on screen)
